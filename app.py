@@ -16,7 +16,7 @@ except ModuleNotFoundError:
     st.error("Could not find scraper.py. Ensure scraper.py is located in your root GitHub folder.")
 
 # -----------------------------------------------------------------------------
-# 2. Page Config & Custom Styling
+# 2. Page Config & Custom Styling (Matches Navy Theme)
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="FMCSA MC Number Scraper",
@@ -213,12 +213,12 @@ with tab3:
         st.info("No active email leads found yet.")
 
 # -----------------------------------------------------------------------------
-# 9. Response Parser Function
+# 9. Case-Insensitive Response Parser Function
 # -----------------------------------------------------------------------------
 def parse_carrier_response(res, mc_int):
     formatted_mc = f"MC-{mc_int}"
     
-    if not res:
+    if not res or not isinstance(res, dict):
         return {
             "MC NUMBER": formatted_mc,
             "CARRIER NAME": "RECORD INACTIVE",
@@ -229,46 +229,44 @@ def parse_carrier_response(res, mc_int):
             "LOCATION": "-"
         }
     
-    if isinstance(res, dict):
-        name = (
-            res.get("legal_name") or res.get("carrier_name") or res.get("name") or 
-            res.get("CARRIER NAME") or res.get("company_name") or res.get("legalName") or
-            res.get("dba_name")
-        )
-        status = (
-            res.get("operating_status") or res.get("status") or res.get("OPERATING STATUS") or 
-            res.get("operatingStatus") or res.get("carrier_status") or res.get("authority_status")
-        )
-        entity = (
-            res.get("entity_type") or res.get("entity") or res.get("ENTITY TYPE") or 
-            res.get("entityType") or res.get("type") or "CARRIER"
-        )
-        phone = (
-            res.get("phone") or res.get("phone_number") or res.get("PHONE NUMBER") or 
-            res.get("phoneNumber") or "-"
-        )
-        email = (
-            res.get("email") or res.get("email_address") or res.get("EMAIL ADDRESS") or 
-            res.get("emailAddress") or "-"
-        )
-        location = (
-            res.get("location") or res.get("address") or res.get("LOCATION") or 
-            res.get("phy_location") or res.get("city_state") or "-"
-        )
+    # Normalize dictionary keys by stripping spaces/underscores and converting to lowercase
+    res_norm = {str(k).lower().replace(" ", "").replace("_", ""): v for k, v in res.items()}
+    
+    name = (
+        res_norm.get("carriername") or res_norm.get("legalname") or 
+        res_norm.get("name") or res_norm.get("companyname") or res_norm.get("dbaname")
+    )
+    status = (
+        res_norm.get("operatingstatus") or res_norm.get("status") or 
+        res_norm.get("carrierstatus") or res_norm.get("authoritystatus")
+    )
+    entity = (
+        res_norm.get("entitytype") or res_norm.get("type") or "CARRIER"
+    )
+    phone = (
+        res_norm.get("phonenumber") or res_norm.get("phone") or "-"
+    )
+    email = (
+        res_norm.get("emailaddress") or res_norm.get("email") or "-"
+    )
+    location = (
+        res_norm.get("location") or res_norm.get("address") or 
+        res_norm.get("phylocation") or res_norm.get("citystate") or "-"
+    )
 
-        if name:
-            status_upper = str(status).upper() if status else "INACTIVE"
-            formatted_status = "🟢 ACTIVE" if ("ACTIVE" in status_upper or "AUTHORIZED" in status_upper) else f"🔴 {status_upper}"
+    if name:
+        status_upper = str(status).upper() if status else "INACTIVE"
+        formatted_status = "🟢 ACTIVE" if ("ACTIVE" in status_upper or "AUTHORIZED" in status_upper) else f"🔴 {status_upper}"
 
-            return {
-                "MC NUMBER": formatted_mc,
-                "CARRIER NAME": str(name).upper(),
-                "ENTITY TYPE": str(entity).upper(),
-                "OPERATING STATUS": formatted_status,
-                "PHONE NUMBER": str(phone),
-                "EMAIL ADDRESS": str(email).upper(),
-                "LOCATION": str(location).upper()
-            }
+        return {
+            "MC NUMBER": formatted_mc,
+            "CARRIER NAME": str(name).upper(),
+            "ENTITY TYPE": str(entity).upper(),
+            "OPERATING STATUS": formatted_status,
+            "PHONE NUMBER": str(phone),
+            "EMAIL ADDRESS": str(email).upper(),
+            "LOCATION": str(location).upper()
+        }
 
     return {
         "MC NUMBER": formatted_mc,
@@ -290,7 +288,6 @@ if st.session_state.is_scraping:
         raw_mc = 1066434
 
     try:
-        # Attempt scrape with int and fallback string
         try:
             res = scrape_mc(raw_mc)
         except Exception:
@@ -300,7 +297,7 @@ if st.session_state.is_scraping:
         parsed_row = parse_carrier_response(res, raw_mc)
         st.session_state.master_log.append(parsed_row)
         st.session_state.current_mc = raw_mc + 1
-        time.sleep(0.5)
+        time.sleep(0.3)
         st.rerun()
 
     except Exception as e:
