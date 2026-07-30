@@ -9,14 +9,14 @@ import streamlit as st
 # -----------------------------------------------------------------------------
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import local scraper module safely with fallback attempts
+# Import local scraper module safely
 try:
     from scraper import scrape_mc
 except ModuleNotFoundError:
-    st.error("Could not find scraper.py. Ensure scraper.py is located in the root GitHub folder.")
+    st.error("Could not find scraper.py. Ensure scraper.py is located in your root GitHub folder.")
 
 # -----------------------------------------------------------------------------
-# 2. Page Config & Custom CSS (Matches target dark navy UI & colors)
+# 2. Page Config & Custom Styling
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="FMCSA MC Number Scraper",
@@ -26,13 +26,11 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Dark Navy Background */
     .stApp {
         background-color: #0b1120 !important;
         color: #f1f5f9;
     }
 
-    /* Header Container Box */
     .header-card {
         background-color: #151e32;
         border: 1px solid #232d48;
@@ -41,7 +39,6 @@ st.markdown("""
         margin-bottom: 24px;
     }
     
-    /* Custom Styling for Metric Cards */
     div[data-testid="stMetric"] {
         background-color: #151e32 !important;
         border: 1px solid #232d48 !important;
@@ -61,7 +58,6 @@ st.markdown("""
         letter-spacing: 0.08em !important;
     }
 
-    /* Primary Start Button (Purple Gradient) */
     div.stButton > button[kind="primary"] {
         background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%) !important;
         color: #ffffff !important;
@@ -72,7 +68,6 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
     }
 
-    /* Secondary Stop Button (Red Tint) */
     div.stButton > button[kind="secondary"] {
         background-color: #2a151b !important;
         color: #f87171 !important;
@@ -82,7 +77,6 @@ st.markdown("""
         height: 42px !important;
     }
 
-    /* Tabs Bar Styling */
     .stTabs [data-baseweb="tab-list"] {
         gap: 24px;
         background-color: transparent;
@@ -98,7 +92,6 @@ st.markdown("""
         border-bottom-color: #ef4444 !important;
     }
     
-    /* Table Data Container */
     div[data-testid="stDataFrame"] {
         background-color: #151e32;
         border: 1px solid #232d48;
@@ -116,9 +109,11 @@ if "master_log" not in st.session_state:
     st.session_state.master_log = []
 if "current_mc" not in st.session_state:
     st.session_state.current_mc = 1066434
+if "last_raw_response" not in st.session_state:
+    st.session_state.last_raw_response = None
 
 # -----------------------------------------------------------------------------
-# 4. Dashboard Header Banner
+# 4. Header Banner
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class="header-card">
@@ -133,7 +128,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 5. Control Panel & Action Triggers
+# 5. Control Panel & Actions
 # -----------------------------------------------------------------------------
 col_input, col_start, col_stop = st.columns([4, 2, 2])
 
@@ -156,7 +151,6 @@ with col_stop:
     if st.button("🛑 Stop", use_container_width=True, type="secondary"):
         st.session_state.is_scraping = False
 
-# Live status text
 log_data = st.session_state.master_log
 total_scraped = len(log_data)
 
@@ -167,7 +161,7 @@ else:
     st.markdown(f"<p style='text-align: center; color: #f87171; font-weight: 600;'>🔴 Stopped at MC-{st.session_state.current_mc} · {total_scraped} total scraped</p>", unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 6. Metrics Calculation
+# 6. Metrics Layout
 # -----------------------------------------------------------------------------
 carriers_found = sum(1 for r in log_data if r.get("CARRIER NAME") != "RECORD INACTIVE")
 active_carriers = sum(1 for r in log_data if "ACTIVE" in str(r.get("OPERATING STATUS")).upper())
@@ -179,10 +173,17 @@ m2.metric("CARRIERS FOUND", carriers_found)
 m3.metric("ACTIVE CARRIERS", active_carriers)
 m4.metric("WITH EMAIL", with_email)
 
-st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+# -----------------------------------------------------------------------------
+# 7. Raw Scraper Debug Panel
+# -----------------------------------------------------------------------------
+with st.expander("🛠️ Raw Scraper Output (Debug Mode - Click to Inspect)", expanded=False):
+    st.write("This shows the raw response returned by `scrape_mc()` for the latest request:")
+    st.json(st.session_state.last_raw_response if st.session_state.last_raw_response else {"info": "No request made yet. Start scraping to view raw output."})
+
+st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 7. Main Data Tabs
+# 8. Main Data Tabs
 # -----------------------------------------------------------------------------
 tab1, tab2, tab3 = st.tabs([
     "📋 Complete Master Log", 
@@ -212,7 +213,7 @@ with tab3:
         st.info("No active email leads found yet.")
 
 # -----------------------------------------------------------------------------
-# 8. Helper Function: Robust Scraper Field Extractor
+# 9. Response Parser Function
 # -----------------------------------------------------------------------------
 def parse_carrier_response(res, mc_int):
     formatted_mc = f"MC-{mc_int}"
@@ -229,38 +230,27 @@ def parse_carrier_response(res, mc_int):
         }
     
     if isinstance(res, dict):
-        # Extract Legal/Carrier Name across different dictionary key variations
         name = (
             res.get("legal_name") or res.get("carrier_name") or res.get("name") or 
             res.get("CARRIER NAME") or res.get("company_name") or res.get("legalName") or
             res.get("dba_name")
         )
-        
-        # Extract Operating Status
         status = (
             res.get("operating_status") or res.get("status") or res.get("OPERATING STATUS") or 
             res.get("operatingStatus") or res.get("carrier_status") or res.get("authority_status")
         )
-        
-        # Extract Entity Type
         entity = (
             res.get("entity_type") or res.get("entity") or res.get("ENTITY TYPE") or 
             res.get("entityType") or res.get("type") or "CARRIER"
         )
-        
-        # Extract Phone
         phone = (
             res.get("phone") or res.get("phone_number") or res.get("PHONE NUMBER") or 
             res.get("phoneNumber") or "-"
         )
-        
-        # Extract Email
         email = (
             res.get("email") or res.get("email_address") or res.get("EMAIL ADDRESS") or 
             res.get("emailAddress") or "-"
         )
-        
-        # Extract Location
         location = (
             res.get("location") or res.get("address") or res.get("LOCATION") or 
             res.get("phy_location") or res.get("city_state") or "-"
@@ -280,7 +270,6 @@ def parse_carrier_response(res, mc_int):
                 "LOCATION": str(location).upper()
             }
 
-    # Default fallback for inactive/unmatched records
     return {
         "MC NUMBER": formatted_mc,
         "CARRIER NAME": "RECORD INACTIVE",
@@ -292,7 +281,7 @@ def parse_carrier_response(res, mc_int):
     }
 
 # -----------------------------------------------------------------------------
-# 9. Execution Loop
+# 10. Execution Loop
 # -----------------------------------------------------------------------------
 if st.session_state.is_scraping:
     try:
@@ -300,19 +289,20 @@ if st.session_state.is_scraping:
     except (ValueError, TypeError):
         raw_mc = 1066434
 
-    # Execute scrape call supporting integer and string arguments
     try:
+        # Attempt scrape with int and fallback string
         try:
             res = scrape_mc(raw_mc)
         except Exception:
             res = scrape_mc(str(raw_mc))
 
+        st.session_state.last_raw_response = res
         parsed_row = parse_carrier_response(res, raw_mc)
         st.session_state.master_log.append(parsed_row)
         st.session_state.current_mc = raw_mc + 1
-        time.sleep(0.3)
+        time.sleep(0.5)
         st.rerun()
 
     except Exception as e:
-        st.error(f"Scraper error on MC-{raw_mc}: {e}")
+        st.error(f"Scraper execution error on MC-{raw_mc}: {e}")
         st.session_state.is_scraping = False
