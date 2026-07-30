@@ -22,7 +22,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Optional: Supabase Database Setup
+# -----------------------------------------------------------------------------
+# Supabase Database Setup (Optional)
+# -----------------------------------------------------------------------------
 try:
     from supabase import create_client, Client
     SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
@@ -132,17 +134,16 @@ with tab3:
 # Batch Execution Loop (Runs 1 step per rerun)
 # -----------------------------------------------------------------------------
 if st.session_state.is_scraping:
-    # Convert MC input to integer explicitly to fix 'Unknown format code d' error
     try:
         raw_mc = int(st.session_state.current_mc)
     except (ValueError, TypeError):
         raw_mc = 1066434
 
-    mc_str_clean = str(raw_mc)
     formatted_mc_label = f"MC-{raw_mc}"
 
     try:
-        res = scrape_mc(mc_str_clean)
+        # Pass raw_mc directly as an INTEGER to scrape_mc
+        res = scrape_mc(raw_mc)
         
         if res and isinstance(res, dict) and res.get("legal_name"):
             row = {
