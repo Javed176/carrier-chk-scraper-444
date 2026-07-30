@@ -3,16 +3,11 @@ app.py — FMCSA SAFER MC Number Range Scraper
 A dark-themed Streamlit dashboard with Supabase RBAC, Session Locking & Admin Controls.
 """
 
-import io
-import time
-import uuid
-from datetime import datetime, timedelta
-from typing import List, Optional
-import pandas as pd
-import streamlit as st
-import streamlit.components.v1 as components
+import os
+import sys
 
-# Import scraper function
+# Force Streamlit to look in the root folder for local modules
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))# Import scraper function
 from scraper import scrape_mc
 
 # ── Import Supabase Client ────────────────────────────────────────────────────
