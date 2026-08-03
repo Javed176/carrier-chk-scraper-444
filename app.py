@@ -47,8 +47,8 @@ if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 if "current_mc" not in st.session_state:
     st.session_state.current_mc = 1066434
-if "start_mc_val" not in st.session_state:
-    st.session_state.start_mc_val = 1066434
+if "start_mc_input" not in st.session_state:
+    st.session_state["start_mc_input"] = 1066434
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_info" not in st.session_state:
@@ -380,14 +380,11 @@ with st.sidebar:
 
             if st.button("Save User Config", key="save_u_cfg"):
                 succ, msg = db.update_user_config(username, sel_u, new_delay, new_dur)
-                if succ or sel_u == username:
-                    if sel_u == username:
-                        st.session_state["user_info"]["session_duration_hours"] = float(new_dur)
-                        st.session_state["user_info"]["delay_ms"] = int(new_delay)
-                    st.success(f"Updated config for '{sel_u}' successfully.")
-                    st.rerun()
-                else:
-                    st.error(msg)
+                if sel_u == username:
+                    st.session_state["user_info"]["session_duration_hours"] = float(new_dur)
+                    st.session_state["user_info"]["delay_ms"] = int(new_delay)
+                st.success(f"Updated config for '{sel_u}' successfully.")
+                st.rerun()
 
         elif admin_mode == "📊 Activity Audit Logs":
             st.subheader("Latest Activity Logs (Max 200)")
@@ -398,14 +395,14 @@ with st.sidebar:
 # ── Render Helper HTML Functions ──────────────────────────────────────────────
 def status_badge(status: str) -> str:
     s = status.upper()
-    if "INACTIVE" in s:
+    if "NOT FOUND" in s or "NOTFOUND" in s:
+        return f'<span style="color:#718096;font-style:italic;">Not Found</span>'
+    elif "INACTIVE" in s:
         return f'<span class="status-inactive"><span class="status-dot-orange"></span>INACTIVE</span>'
     elif "ACTIVE" in s:
         return f'<span class="status-active"><span class="status-dot-green"></span>ACTIVE</span>'
     elif "OUT" in s or "OOS" in s:
         return f'<span class="status-oos"><span class="status-dot-red"></span>OUT-OF-SERVICE</span>'
-    elif "NOT FOUND" in s:
-        return f'<span style="color:#4a5568;font-style:italic;">Not Found</span>'
     return f'<span style="color:#a0aec0;">{status}</span>'
 
 
@@ -487,7 +484,7 @@ with col1:
         "Start MC Number",
         min_value=1,
         max_value=9999999,
-        value=int(st.session_state.start_mc_val),
+        value=int(st.session_state.get("start_mc_input", 1066434)),
         step=1,
         format="%d",
         key="start_mc_input",
@@ -510,12 +507,11 @@ st.markdown("</div>", unsafe_allow_html=True)
 if scrape_btn:
     st.session_state.stop_requested = False
     st.session_state.current_mc = int(start_mc)
-    st.session_state.start_mc_val = int(start_mc)
     st.session_state.scraping = True
 
 if stop_btn:
     st.session_state.stop_requested = True
-    st.session_state.start_mc_val = int(st.session_state.current_mc)
+    st.session_state["start_mc_input"] = int(st.session_state.current_mc)
 
 if clear_btn:
     st.session_state.results = []
@@ -549,7 +545,7 @@ if st.session_state.scraping:
         if user_delay > 0:
             time.sleep(user_delay)
 
-    st.session_state.start_mc_val = int(st.session_state.current_mc)
+    st.session_state["start_mc_input"] = int(st.session_state.current_mc)
     db.log_activity(username, "HARVEST_MC", f"Scraped batch up to MC-{st.session_state.current_mc:07d} ({count} total)")
 
     status_text.markdown(
@@ -560,8 +556,19 @@ if st.session_state.scraping:
     st.rerun()
 
 results = st.session_state.results
-found = [r for r in results if r.get("_found", False)]
-active = [r for r in found if "ACTIVE" in r.get("Operating Status", "").upper() and "IN" not in r.get("Operating Status", "").upper()]
+# Filter out BROKERS and NOT FOUND records from Carriers Found & Active Carriers metric counts
+found = [
+    r for r in results 
+    if r.get("_found", False) 
+    and "BROKER" not in r.get("MC Number", "").upper() 
+    and "BROKER" not in r.get("Entity Type", "").upper()
+]
+active = [
+    r for r in found 
+    if "ACTIVE" in r.get("Operating Status", "").upper() 
+    and "IN" not in r.get("Operating Status", "").upper() 
+    and "NOT" not in r.get("Operating Status", "").upper()
+]
 with_email = [r for r in active if r.get("Email Address", "—") not in ("—", "", None)]
 
 if results:
