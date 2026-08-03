@@ -16,7 +16,8 @@ try:
     from db_manager import db
 except ImportError:
     class DummyDB:
-        def authenticate_and_login(self, u, p): return True, "OK", {"username": u, "is_admin": True, "session_duration_hours": 3.0, "session_token": "dummy"}
+        def authenticate_and_login(self, u, p): 
+            return True, "OK", {"username": u, "is_admin": True, "session_duration_hours": 3.0, "session_token": "dummy"}
         def verify_active_session(self, u, s): return True
         def log_activity(self, u, a, d=""): pass
         def get_activity_logs(self, limit=200): return pd.DataFrame()
@@ -28,7 +29,8 @@ except ImportError:
 try:
     from scraper import scrape_mc
 except ImportError:
-    def scrape_mc(mc): return {"MC Number": f"MC-{mc:07d}", "Carrier Name": "Error: scraper.py missing", "_found": False}
+    def scrape_mc(mc): 
+        return {"MC Number": f"MC-{mc:07d}", "Carrier Name": "Error: scraper.py missing", "_found": False, "Entity Type": "CARRIER"}
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -47,8 +49,8 @@ if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 if "current_mc" not in st.session_state:
     st.session_state.current_mc = 1066434
-if "start_mc_input" not in st.session_state:
-    st.session_state["start_mc_input"] = 1066434
+if "start_mc_val" not in st.session_state:
+    st.session_state.start_mc_val = 1066434
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_info" not in st.session_state:
@@ -222,7 +224,8 @@ st.markdown(
     }
 
     div[data-testid="stNumberInput"] input,
-    div[data-testid="stTextInput"] input {
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stSelectbox"] > div {
         background: rgba(255,255,255,0.06) !important;
         border: 1px solid rgba(139,92,246,0.4) !important;
         border-radius: 8px !important;
@@ -231,7 +234,8 @@ st.markdown(
     }
 
     div[data-testid="stNumberInput"] label,
-    div[data-testid="stTextInput"] label {
+    div[data-testid="stTextInput"] label,
+    div[data-testid="stSelectbox"] label {
         color: #c0c0d0 !important;
         font-weight: 500 !important;
         font-size: 13px !important;
@@ -305,6 +309,7 @@ st.markdown(
     .mc-cell { font-family: monospace; font-weight: 600; color: #a5b4fc; }
     .name-cell { font-weight: 600; color: #f0f0f0; }
     .entity-badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; background: rgba(99,102,241,0.2); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
+    .entity-badge-broker { padding: 3px 10px; border-radius: 20px; font-size: 11px; background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
     .status-active { color: #68d391; font-weight: 600; }
     .status-inactive { color: #f6ad55; font-weight: 600; }
     .status-oos { color: #fc8181; font-weight: 600; }
@@ -380,11 +385,14 @@ with st.sidebar:
 
             if st.button("Save User Config", key="save_u_cfg"):
                 succ, msg = db.update_user_config(username, sel_u, new_delay, new_dur)
-                if sel_u == username:
-                    st.session_state["user_info"]["session_duration_hours"] = float(new_dur)
-                    st.session_state["user_info"]["delay_ms"] = int(new_delay)
-                st.success(f"Updated config for '{sel_u}' successfully.")
-                st.rerun()
+                if succ or sel_u == username:
+                    if sel_u == username:
+                        st.session_state["user_info"]["session_duration_hours"] = float(new_dur)
+                        st.session_state["user_info"]["delay_ms"] = int(new_delay)
+                    st.success(f"Updated config for '{sel_u}' successfully.")
+                    st.rerun()
+                else:
+                    st.error(msg)
 
         elif admin_mode == "📊 Activity Audit Logs":
             st.subheader("Latest Activity Logs (Max 200)")
@@ -394,21 +402,21 @@ with st.sidebar:
 
 # ── Render Helper HTML Functions ──────────────────────────────────────────────
 def status_badge(status: str) -> str:
-    s = status.upper()
-    if "NOT FOUND" in s or "NOTFOUND" in s:
-        return f'<span style="color:#718096;font-style:italic;">Not Found</span>'
-    elif "INACTIVE" in s:
+    s = str(status).upper()
+    if "INACTIVE" in s:
         return f'<span class="status-inactive"><span class="status-dot-orange"></span>INACTIVE</span>'
     elif "ACTIVE" in s:
         return f'<span class="status-active"><span class="status-dot-green"></span>ACTIVE</span>'
     elif "OUT" in s or "OOS" in s:
         return f'<span class="status-oos"><span class="status-dot-red"></span>OUT-OF-SERVICE</span>'
+    elif "NOT FOUND" in s:
+        return f'<span style="color:#4a5568;font-style:italic;">Not Found</span>'
     return f'<span style="color:#a0aec0;">{status}</span>'
 
 
 def mc_cell_html(mc_str: str) -> str:
-    if mc_str.startswith("BROKER "):
-        parts = mc_str.split(" ", 1)
+    if str(mc_str).startswith("BROKER "):
+        parts = str(mc_str).split(" ", 1)
         return f'<span style="color:#fbbf24;font-weight:700;">{parts[0]}</span> <span class="mc-cell">{parts[1]}</span>'
     return f'<span class="mc-cell">{mc_str}</span>'
 
@@ -424,7 +432,7 @@ def render_table(rows: List[dict]) -> str:
         return '<p style="color:#4a5568;text-align:center;padding:32px;">No data to display.</p>'
 
     header_cols = [
-        "MC Number", "Carrier Name", "Entity Type",
+        "MC Number", "Carrier / Broker Name", "Entity Type",
         "Operating Status", "Phone Number", "Email Address", "Location"
     ]
     html = '<div class="table-wrapper"><table class="fmcsa-table"><thead><tr>'
@@ -433,11 +441,14 @@ def render_table(rows: List[dict]) -> str:
     html += "</tr></thead><tbody>"
 
     for row in rows:
+        et = row.get("Entity Type", "CARRIER").upper()
+        badge_cls = "entity-badge-broker" if "BROKER" in et else "entity-badge"
+        name = row.get("Carrier Name", row.get("Broker Name", "—"))
+
         html += "<tr>"
         html += f'<td>{mc_cell_html(row.get("MC Number","—"))}</td>'
-        html += f'<td class="name-cell">{row.get("Carrier Name","—")}</td>'
-        et = row.get("Entity Type", "—")
-        html += f'<td><span class="entity-badge">{et}</span></td>'
+        html += f'<td class="name-cell">{name}</td>'
+        html += f'<td><span class="{badge_cls}">{et}</span></td>'
         html += f'<td>{status_badge(row.get("Operating Status","—"))}</td>'
         html += f'<td style="color:#cbd5e0;font-size:13px;">{row.get("Phone Number","—")}</td>'
         html += f'<td>{email_cell_html(row.get("Email Address","—"))}</td>'
@@ -451,7 +462,12 @@ def render_table(rows: List[dict]) -> str:
 def df_from_results(rows: List[dict]) -> pd.DataFrame:
     cols = ["MC Number", "Carrier Name", "Entity Type",
             "Operating Status", "Phone Number", "Email Address", "Location"]
-    clean = [{c: r.get(c, "—") for c in cols} for r in rows]
+    clean = []
+    for r in rows:
+        item = {c: r.get(c, "—") for c in cols}
+        if "Carrier Name" not in r and "Broker Name" in r:
+            item["Carrier Name"] = r["Broker Name"]
+        clean.append(item)
     return pd.DataFrame(clean, columns=cols)
 
 
@@ -477,17 +493,24 @@ st.markdown(
 )
 
 st.markdown('<div class="input-card">', unsafe_allow_html=True)
-col1, col2, col3, col4 = st.columns([2.5, 1.5, 1.2, 1.4])
+col1, col_filter, col2, col3, col4 = st.columns([2.0, 1.5, 1.2, 1.0, 1.2])
 
 with col1:
     start_mc = st.number_input(
         "Start MC Number",
         min_value=1,
         max_value=9999999,
-        value=int(st.session_state.get("start_mc_input", 1066434)),
+        value=int(st.session_state.start_mc_val),
         step=1,
         format="%d",
         key="start_mc_input",
+    )
+
+with col_filter:
+    entity_filter = st.selectbox(
+        "Filter View",
+        ["All Records", "Carriers Only", "Brokers Only"],
+        key="entity_filter_select"
     )
 
 with col2:
@@ -507,6 +530,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 if scrape_btn:
     st.session_state.stop_requested = False
     st.session_state.current_mc = int(start_mc)
+    st.session_state.start_mc_val = int(start_mc)
     st.session_state.scraping = True
 
 if stop_btn:
@@ -545,7 +569,7 @@ if st.session_state.scraping:
         if user_delay > 0:
             time.sleep(user_delay)
 
-    st.session_state["start_mc_input"] = int(st.session_state.current_mc)
+    st.session_state.start_mc_val = int(st.session_state.current_mc)
     db.log_activity(username, "HARVEST_MC", f"Scraped batch up to MC-{st.session_state.current_mc:07d} ({count} total)")
 
     status_text.markdown(
@@ -556,27 +580,25 @@ if st.session_state.scraping:
     st.rerun()
 
 results = st.session_state.results
-# Filter out BROKERS and NOT FOUND records from Carriers Found & Active Carriers metric counts
-found = [
-    r for r in results 
-    if r.get("_found", False) 
-    and "BROKER" not in r.get("MC Number", "").upper() 
-    and "BROKER" not in r.get("Entity Type", "").upper()
-]
-active = [
-    r for r in found 
-    if "ACTIVE" in r.get("Operating Status", "").upper() 
-    and "IN" not in r.get("Operating Status", "").upper() 
-    and "NOT" not in r.get("Operating Status", "").upper()
-]
+
+# Apply entity filter
+if entity_filter == "Carriers Only":
+    filtered_results = [r for r in results if "BROKER" not in str(r.get("Entity Type", "")).upper() and "BROKER" not in str(r.get("MC Number", "")).upper()]
+elif entity_filter == "Brokers Only":
+    filtered_results = [r for r in results if "BROKER" in str(r.get("Entity Type", "")).upper() or "BROKER" in str(r.get("MC Number", "")).upper()]
+else:
+    filtered_results = results
+
+found = [r for r in filtered_results if r.get("_found", False)]
+active = [r for r in found if "ACTIVE" in r.get("Operating Status", "").upper() and "IN" not in r.get("Operating Status", "").upper()]
 with_email = [r for r in active if r.get("Email Address", "—") not in ("—", "", None)]
 
-if results:
+if filtered_results:
     sc1, sc2, sc3, sc4 = st.columns(4)
     stats = [
-        (len(results), "Total Scraped", "#c7d2fe"),
-        (len(found), "Carriers Found", "#68d391"),
-        (len(active), "Active Carriers", "#48bb78"),
+        (len(filtered_results), "Total Scraped", "#c7d2fe"),
+        (len(found), "Entities Found", "#68d391"),
+        (len(active), "Active Entities", "#48bb78"),
         (len(with_email), "With Email", "#76e4f7"),
     ]
     for col, (val, label, color) in zip([sc1, sc2, sc3, sc4], stats):
@@ -598,8 +620,8 @@ if results:
     ])
 
     with tab1:
-        st.markdown(render_table(found if found else results), unsafe_allow_html=True)
-        df_all = df_from_results(found if found else results)
+        st.markdown(render_table(found if found else filtered_results), unsafe_allow_html=True)
+        df_all = df_from_results(found if found else filtered_results)
         st.markdown('<div class="export-btn-wrap">', unsafe_allow_html=True)
         st.download_button(
             label="📥  Export Master Sheet to CSV",
@@ -626,7 +648,7 @@ if results:
         else:
             st.markdown(
                 '<p style="color:#4a5568;text-align:center;padding:48px;font-size:15px;">'
-                '🚫 No active carriers found yet. Run the scraper first.</p>',
+                '🚫 No active records matching current selection. Run the scraper or adjust filters.</p>',
                 unsafe_allow_html=True,
             )
 
@@ -638,9 +660,9 @@ if results:
                     f'<div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.05);display:flex;justify-content:space-between;align-items:center;">'
                     f'<div>'
                     f'<div style="color:#76e4f7;font-size:14px;">{r["Email Address"]}</div>'
-                    f'<div style="color:#e2e8f0;font-size:12px;">{r["Carrier Name"]} &nbsp;·&nbsp; {r["MC Number"]} &nbsp;·&nbsp; {r["Location"]}</div>'
+                    f'<div style="color:#e2e8f0;font-size:12px;">{r.get("Carrier Name", r.get("Broker Name", "—"))} &nbsp;·&nbsp; {r["MC Number"]} &nbsp;·&nbsp; {r.get("Location", "—")}</div>'
                     f'</div>'
-                    f'<div style="color:#718096;font-size:11px;">{r["Phone Number"]}</div>'
+                    f'<div style="color:#718096;font-size:11px;">{r.get("Phone Number", "—")}</div>'
                     f'</div>'
                     for r in with_email
                 )
@@ -660,7 +682,7 @@ if results:
         else:
             st.markdown(
                 '<p style="color:#4a5568;text-align:center;padding:48px;font-size:15px;">'
-                '📧 No emails found yet. Active carriers without emails won\'t appear here.</p>',
+                '📧 No emails found yet. Active entities without emails won\'t appear here.</p>',
                 unsafe_allow_html=True,
             )
 
@@ -672,7 +694,7 @@ else:
             <h3 style="color:#e2e8f0;font-size:20px;margin-bottom:8px;">Ready to Scrape</h3>
             <p style="color:#718096;font-size:14px;max-width:400px;margin:0 auto;">
                 Enter a start MC number above, then click <strong style="color:#a5b4fc;">Start Scraping</strong>.<br>
-                Results appear in real-time as each carrier is fetched.
+                Results appear in real-time as each carrier or broker is fetched.
             </p>
         </div>
         """,
