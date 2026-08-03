@@ -196,7 +196,9 @@ st.markdown(
         min-height: 100vh;
     }
 
-    #MainMenu, footer, header { visibility: hidden; }
+    /* Fixed header rule to preserve the sidebar toggle button */
+    #MainMenu, footer { visibility: hidden; }
+    div[data-testid="stHeader"] { background: transparent !important; }
 
     .header-banner {
         background: linear-gradient(90deg, rgba(99,102,241,0.15) 0%, rgba(139,92,246,0.10) 100%);
