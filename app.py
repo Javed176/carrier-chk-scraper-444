@@ -48,9 +48,9 @@ if "scraping" not in st.session_state:
 if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 if "current_mc" not in st.session_state:
-    st.session_state.current_mc = 1066434
+    st.session_state.current_mc = 1800000
 if "start_mc_val" not in st.session_state:
-    st.session_state.start_mc_val = 1066434
+    st.session_state.start_mc_val = 1800000
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_info" not in st.session_state:
