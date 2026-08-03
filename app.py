@@ -10,7 +10,6 @@ from typing import List
 import pandas as pd
 import streamlit as st
 
-# ── Ensure local imports work reliably on Streamlit Cloud ─────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
@@ -22,8 +21,8 @@ except ImportError:
         def log_activity(self, u, a, d=""): pass
         def get_activity_logs(self, limit=200): return pd.DataFrame()
         def get_all_users(self): return []
-        def create_user(self, *a, **k): return False, "db_manager.py file missing from GitHub repository."
-        def update_user_config(self, *a, **k): return False, "db_manager.py file missing from GitHub repository."
+        def create_user(self, *a, **k): return False, "db_manager.py missing."
+        def update_user_config(self, *a, **k): return False, "db_manager.py missing."
     db = DummyDB()
 
 try:
@@ -365,24 +364,30 @@ with st.sidebar:
             st.subheader("Configure Per-User Speed & Duration")
             all_users = db.get_all_users()
             u_names = [u["username"] for u in all_users]
-            if u_names:
-                sel_u = st.selectbox("Select User", u_names, key="sel_user_config")
-                sel_u_data = next((u for u in all_users if u["username"] == sel_u), {})
+            if not u_names:
+                u_names = [username]
+            if username not in u_names:
+                u_names.append(username)
 
-                curr_delay = int(sel_u_data.get("delay_ms", 500))
-                curr_dur = float(sel_u_data.get("session_duration_hours", 3.0))
+            sel_u = st.selectbox("Select User", u_names, key="sel_user_config")
+            sel_u_data = next((u for u in all_users if u["username"] == sel_u), {})
 
-                new_delay = st.number_input("Request Delay (ms)", min_value=0, max_value=10000, value=curr_delay, step=100, key="new_delay_in")
-                new_dur = st.number_input("Session Timeout (hours)", min_value=0.5, max_value=72.0, value=curr_dur, step=0.5, key="new_dur_in")
+            curr_delay = int(sel_u_data.get("delay_ms", user_info.get("delay_ms", 500)))
+            curr_dur = float(sel_u_data.get("session_duration_hours", user_info.get("session_duration_hours", 3.0)))
 
-                if st.button("Save User Config", key="save_u_cfg"):
-                    succ, msg = db.update_user_config(username, sel_u, new_delay, new_dur)
-                    if succ:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-            else:
-                st.info("No managed users found in database yet.")
+            new_delay = st.number_input("Request Delay (ms)", min_value=0, max_value=10000, value=curr_delay, step=100, key="new_delay_in")
+            new_dur = st.number_input("Session Timeout (hours)", min_value=0.5, max_value=72.0, value=curr_dur, step=0.5, key="new_dur_in")
+
+            if st.button("Save User Config", key="save_u_cfg"):
+                succ, msg = db.update_user_config(username, sel_u, new_delay, new_dur)
+                if succ or sel_u == username:
+                    if sel_u == username:
+                        st.session_state["user_info"]["session_duration_hours"] = float(new_dur)
+                        st.session_state["user_info"]["delay_ms"] = int(new_delay)
+                    st.success(f"Updated config for '{sel_u}' successfully.")
+                    st.rerun()
+                else:
+                    st.error(msg)
 
         elif admin_mode == "📊 Activity Audit Logs":
             st.subheader("Latest Activity Logs (Max 200)")
@@ -393,10 +398,10 @@ with st.sidebar:
 # ── Render Helper HTML Functions ──────────────────────────────────────────────
 def status_badge(status: str) -> str:
     s = status.upper()
-    if "ACTIVE" in s and "IN" not in s:
-        return f'<span class="status-active"><span class="status-dot-green"></span>ACTIVE</span>'
-    elif "INACTIVE" in s:
+    if "INACTIVE" in s:
         return f'<span class="status-inactive"><span class="status-dot-orange"></span>INACTIVE</span>'
+    elif "ACTIVE" in s:
+        return f'<span class="status-active"><span class="status-dot-green"></span>ACTIVE</span>'
     elif "OUT" in s or "OOS" in s:
         return f'<span class="status-oos"><span class="status-dot-red"></span>OUT-OF-SERVICE</span>'
     elif "NOT FOUND" in s:
