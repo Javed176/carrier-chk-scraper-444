@@ -11,7 +11,6 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
-# Optional Supabase import
 try:
     from supabase import create_client, Client
     HAS_SUPABASE_LIB = True
@@ -20,33 +19,11 @@ except ImportError:
     HAS_SUPABASE_LIB = False
 
 
-# ── Hash Helper ───────────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
     """Hash password using SHA-256."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-# ── In-Memory Fallback State (when Supabase secrets are not set) ───────────────
-if "fallback_users" not in st.session_state:
-    admin_user = st.secrets.get("ADMIN_USERNAME", "admin")
-    admin_pass = st.secrets.get("ADMIN_PASSWORD", "admin_secret_password_123")
-    st.session_state["fallback_users"] = {
-        admin_user: {
-            "username": admin_user,
-            "password_hash": hash_password(admin_pass),
-            "is_admin": True,
-            "delay_ms": int(st.secrets.get("DEFAULT_DELAY_MS", 500)),
-            "session_duration_hours": float(st.secrets.get("DEFAULT_SESSION_HOURS", 3.0)),
-            "active_session_id": "",
-            "created_at": datetime.datetime.utcnow().isoformat(),
-        }
-    }
-
-if "fallback_activity_logs" not in st.session_state:
-    st.session_state["fallback_activity_logs"] = []
-
-
-# ── Supabase Client Initializer ───────────────────────────────────────────────
 def _get_supabase_client() -> Optional[Client]:
     """Initialize Supabase client if secrets are properly configured."""
     if not HAS_SUPABASE_LIB:
@@ -61,7 +38,6 @@ def _get_supabase_client() -> Optional[Client]:
         return None
 
 
-# ── Database Operations Class ────────────────────────────────────────────────
 class DatabaseManager:
     """Unified Database interface with real Supabase + local fallback mode."""
 
@@ -72,7 +48,6 @@ class DatabaseManager:
     def is_using_supabase(self) -> bool:
         return self.sb is not None
 
-    # ── User Authentication & Single-Device Lockout ───────────────────────────
     def authenticate_and_login(self, username: str, password: str) -> Tuple[bool, str, Optional[Dict]]:
         """
         Validate username & password, generate new session_token UUID,
@@ -83,59 +58,88 @@ class DatabaseManager:
         hashed = hash_password(password)
         session_token = str(uuid.uuid4())
 
+        # ── 1. Check Primary Configured Secret Admin Account ────────────────
+        secrets_admin_u = st.secrets.get("ADMIN_USERNAME", "admin").strip()
+        secrets_admin_p = st.secrets.get("ADMIN_PASSWORD", "admin_secret_password_123")
+
+        if username == secrets_admin_u and password == secrets_admin_p:
+            user_info = {
+                "username": username,
+                "is_admin": True,
+                "delay_ms": int(st.secrets.get("DEFAULT_DELAY_MS", 500)),
+                "session_duration_hours": float(st.secrets.get("DEFAULT_SESSION_HOURS", 3.0)),
+                "session_token": session_token,
+            }
+
+            # Sync active_session_id to Supabase if connected
+            if self.is_using_supabase:
+                try:
+                    self.sb.table("users").upsert({
+                        "username": username,
+                        "password_hash": hash_password(password),
+                        "is_admin": True,
+                        "active_session_id": session_token,
+                    }, on_conflict="username").execute()
+                except Exception:
+                    pass
+
+            st.session_state[f"active_token_{username}"] = session_token
+            self.log_activity(username, "LOGIN", "Super Admin logged in successfully")
+            return True, "Success", user_info
+
+        # ── 2. Check Supabase Database Table ─────────────────────────────────
         if self.is_using_supabase:
             try:
                 res = self.sb.table("users").select("*").eq("username", username).execute()
-                if not res.data:
-                    return False, "User not found.", None
-                user_row = res.data[0]
-                if user_row.get("password_hash") != hashed and user_row.get("password") != password:
-                    return False, "Invalid password.", None
-
-                # Update active_session_id in Supabase for single-device lockout
-                self.sb.table("users").update({"active_session_id": session_token}).eq("username", username).execute()
-
-                user_info = {
-                    "username": user_row["username"],
-                    "is_admin": user_row.get("is_admin", False),
-                    "delay_ms": user_row.get("delay_ms", 500),
-                    "session_duration_hours": float(user_row.get("session_duration_hours", 3.0)),
-                    "session_token": session_token,
-                }
-                self.log_activity(username, "LOGIN", "User logged in successfully")
-                return True, "Success", user_info
-            except Exception as e:
-                # Fallback on Supabase error
+                if res.data:
+                    user_row = res.data[0]
+                    if user_row.get("password_hash") == hashed or user_row.get("password") == password:
+                        self.sb.table("users").update({"active_session_id": session_token}).eq("username", username).execute()
+                        user_info = {
+                            "username": user_row["username"],
+                            "is_admin": user_row.get("is_admin", False),
+                            "delay_ms": user_row.get("delay_ms", 500),
+                            "session_duration_hours": float(user_row.get("session_duration_hours", 3.0)),
+                            "session_token": session_token,
+                        }
+                        self.log_activity(username, "LOGIN", "User logged in via Supabase")
+                        return True, "Success", user_info
+                    else:
+                        return False, "Invalid password.", None
+            except Exception:
                 pass
 
-        # Fallback in-memory auth
-        users = st.session_state["fallback_users"]
-        if username not in users:
-            return False, "User not found.", None
-        u = users[username]
-        if u["password_hash"] != hashed and u.get("password") != password:
-            return False, "Invalid password.", None
+        # ── 3. Check In-Memory Fallback Users ────────────────────────────────
+        users = st.session_state.get("fallback_users", {})
+        if username in users:
+            u = users[username]
+            if u["password_hash"] == hashed or u.get("password") == password:
+                u["active_session_id"] = session_token
+                user_info = {
+                    "username": u["username"],
+                    "is_admin": u.get("is_admin", False),
+                    "delay_ms": u.get("delay_ms", 500),
+                    "session_duration_hours": float(u.get("session_duration_hours", 3.0)),
+                    "session_token": session_token,
+                }
+                self.log_activity(username, "LOGIN", "User logged in via Fallback Mode")
+                return True, "Success", user_info
 
-        # Set active_session_id locally
-        u["active_session_id"] = session_token
-        user_info = {
-            "username": u["username"],
-            "is_admin": u.get("is_admin", False),
-            "delay_ms": u.get("delay_ms", 500),
-            "session_duration_hours": float(u.get("session_duration_hours", 3.0)),
-            "session_token": session_token,
-        }
-        self.log_activity(username, "LOGIN", "User logged in successfully (Fallback Mode)")
-        return True, "Success", user_info
+        return False, "User not found.", None
 
     def verify_active_session(self, username: str, session_token: str) -> bool:
         """
         Single-Device Lockout Check:
         Returns True if current local session_token matches active_session_id in DB.
-        Returns False if another browser/device has logged in using the same credentials.
         """
         if not username or not session_token:
             return False
+
+        secrets_admin_u = st.secrets.get("ADMIN_USERNAME", "admin").strip()
+        if username == secrets_admin_u:
+            stored_token = st.session_state.get(f"active_token_{username}")
+            if stored_token:
+                return stored_token == session_token
 
         if self.is_using_supabase:
             try:
@@ -146,13 +150,11 @@ class DatabaseManager:
             except Exception:
                 pass
 
-        # Fallback mode check
         users = st.session_state.get("fallback_users", {})
         if username in users:
             return users[username].get("active_session_id") == session_token
         return True
 
-    # ── User Activity Auditing ────────────────────────────────────────────────
     def log_activity(self, user_email: str, action_type: str, details: str = ""):
         """Record critical user action into activity_logs table."""
         now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -170,10 +172,11 @@ class DatabaseManager:
             except Exception:
                 pass
 
-        # Fallback log list
-        logs = st.session_state.get("fallback_activity_logs", [])
+        if "fallback_activity_logs" not in st.session_state:
+            st.session_state["fallback_activity_logs"] = []
+
+        logs = st.session_state["fallback_activity_logs"]
         logs.insert(0, log_entry)
-        # Cap at 500 in memory
         st.session_state["fallback_activity_logs"] = logs[:500]
 
     def get_activity_logs(self, limit: int = 200) -> pd.DataFrame:
@@ -192,13 +195,11 @@ class DatabaseManager:
             except Exception:
                 pass
 
-        # Fallback
         logs = st.session_state.get("fallback_activity_logs", [])
         if not logs:
             return pd.DataFrame(columns=["timestamp", "user_email", "action_type", "details"])
         return pd.DataFrame(logs[:limit])
 
-    # ── Super Admin User Lifecycle Management ──────────────────────────────────
     def get_all_users(self) -> List[Dict]:
         """Fetch list of user accounts."""
         if self.is_using_supabase:
@@ -209,7 +210,6 @@ class DatabaseManager:
             except Exception:
                 pass
 
-        # Fallback
         users = st.session_state.get("fallback_users", {})
         res = []
         for u in users.values():
@@ -264,8 +264,10 @@ class DatabaseManager:
             except Exception as e:
                 return False, f"Database error: {str(e)}"
 
-        # Fallback
-        users = st.session_state.get("fallback_users", {})
+        if "fallback_users" not in st.session_state:
+            st.session_state["fallback_users"] = {}
+
+        users = st.session_state["fallback_users"]
         if new_username in users:
             return False, f"Username '{new_username}' already exists."
 
@@ -313,7 +315,6 @@ class DatabaseManager:
             except Exception as e:
                 return False, f"Database error: {str(e)}"
 
-        # Fallback
         users = st.session_state.get("fallback_users", {})
         if target_username not in users:
             return False, f"User '{target_username}' not found."
@@ -331,5 +332,4 @@ class DatabaseManager:
         return True, f"Updated settings for '{target_username}'."
 
 
-# Singleton instance
 db = DatabaseManager()
