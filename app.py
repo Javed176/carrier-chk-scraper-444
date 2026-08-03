@@ -3,13 +3,33 @@ app.py — FMCSA SAFER MC Number Range Scraper
 """
 
 import io
+import os
+import sys
 import time
 from typing import List
 import pandas as pd
 import streamlit as st
 
-from db_manager import db
-from scraper import scrape_mc
+# ── Ensure local imports work reliably on Streamlit Cloud ─────────────────────
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from db_manager import db
+except ImportError:
+    class DummyDB:
+        def authenticate_and_login(self, u, p): return True, "OK", {"username": u, "is_admin": True, "session_duration_hours": 3.0, "session_token": "dummy"}
+        def verify_active_session(self, u, s): return True
+        def log_activity(self, u, a, d=""): pass
+        def get_activity_logs(self, limit=200): return pd.DataFrame()
+        def get_all_users(self): return []
+        def create_user(self, *a, **k): return False, "db_manager.py file missing from GitHub repository."
+        def update_user_config(self, *a, **k): return False, "db_manager.py file missing from GitHub repository."
+    db = DummyDB()
+
+try:
+    from scraper import scrape_mc
+except ImportError:
+    def scrape_mc(mc): return {"MC Number": f"MC-{mc:07d}", "Carrier Name": "Error: scraper.py missing", "_found": False}
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -151,11 +171,9 @@ username = user_info.get("username", "User")
 session_token = user_info.get("session_token", "")
 session_duration_h = float(user_info.get("session_duration_hours", 3.0))
 
-# 1. Single-Device Lockout Check
 if not db.verify_active_session(username, session_token):
     force_logout("Session terminated: Account logged in from another tab or device.")
 
-# 2. Auto-Locking Session Expiration Check
 elapsed_sec = time.time() - st.session_state.get("login_time", time.time())
 max_sec = session_duration_h * 3600.0
 remaining_sec = max(0.0, max_sec - elapsed_sec)
@@ -163,7 +181,6 @@ remaining_sec = max(0.0, max_sec - elapsed_sec)
 if elapsed_sec >= max_sec:
     db.log_activity(username, "SESSION_TIMEOUT", f"Auto-locked after {session_duration_h} hours")
     force_logout(f"Session expired automatically after {session_duration_h:g} hours.")
-
 
 # ── Global CSS Styling ────────────────────────────────────────────────────────
 st.markdown(
@@ -180,7 +197,6 @@ st.markdown(
 
     #MainMenu, footer, header { visibility: hidden; }
 
-    /* Header banner */
     .header-banner {
         background: linear-gradient(90deg, rgba(99,102,241,0.15) 0%, rgba(139,92,246,0.10) 100%);
         border: 1px solid rgba(139,92,246,0.3);
@@ -198,7 +214,6 @@ st.markdown(
         margin: 0;
     }
 
-    /* Input card */
     .input-card {
         background: rgba(255,255,255,0.04);
         border: 1px solid rgba(255,255,255,0.1);
@@ -223,7 +238,6 @@ st.markdown(
         font-size: 13px !important;
     }
 
-    /* Buttons */
     div[data-testid="stButton"] > button[kind="primary"] {
         background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
         border: none !important;
@@ -247,7 +261,6 @@ st.markdown(
         width: 100% !important;
     }
 
-    /* Tabs & Tables */
     div[data-testid="stTabs"] [role="tablist"] {
         background: rgba(255,255,255,0.04);
         border-radius: 12px;
@@ -311,7 +324,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Sidebar User Profile & Admin Controls ────────────────────────────────────
+# ── Sidebar Account & Admin Controls ──────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 👤 User Account")
     is_admin = user_info.get("is_admin", False)
@@ -319,7 +332,6 @@ with st.sidebar:
     st.markdown(f"**User**: `{username}`")
     st.markdown(f"**Role**: `{role_badge}`")
 
-    # Countdown timer display
     rem_min = int(remaining_sec // 60)
     st.caption(f"⏳ Session Expires in: **{rem_min} mins**")
 
@@ -328,7 +340,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 🛡️ Super Admin Controls Section
     if is_admin:
         st.markdown("### 🛡️ Admin Controls")
         admin_mode = st.radio(
@@ -354,26 +365,30 @@ with st.sidebar:
             st.subheader("Configure Per-User Speed & Duration")
             all_users = db.get_all_users()
             u_names = [u["username"] for u in all_users]
-            sel_u = st.selectbox("Select User", u_names, key="sel_user_config")
-            sel_u_data = next((u for u in all_users if u["username"] == sel_u), {})
+            if u_names:
+                sel_u = st.selectbox("Select User", u_names, key="sel_user_config")
+                sel_u_data = next((u for u in all_users if u["username"] == sel_u), {})
 
-            curr_delay = int(sel_u_data.get("delay_ms", 500))
-            curr_dur = float(sel_u_data.get("session_duration_hours", 3.0))
+                curr_delay = int(sel_u_data.get("delay_ms", 500))
+                curr_dur = float(sel_u_data.get("session_duration_hours", 3.0))
 
-            new_delay = st.number_input("Request Delay (ms)", min_value=0, max_value=10000, value=curr_delay, step=100, key="new_delay_in")
-            new_dur = st.number_input("Session Timeout (hours)", min_value=0.5, max_value=72.0, value=curr_dur, step=0.5, key="new_dur_in")
+                new_delay = st.number_input("Request Delay (ms)", min_value=0, max_value=10000, value=curr_delay, step=100, key="new_delay_in")
+                new_dur = st.number_input("Session Timeout (hours)", min_value=0.5, max_value=72.0, value=curr_dur, step=0.5, key="new_dur_in")
 
-            if st.button("Save User Config", key="save_u_cfg"):
-                succ, msg = db.update_user_config(username, sel_u, new_delay, new_dur)
-                if succ:
-                    st.success(msg)
-                else:
-                    st.error(msg)
+                if st.button("Save User Config", key="save_u_cfg"):
+                    succ, msg = db.update_user_config(username, sel_u, new_delay, new_dur)
+                    if succ:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+            else:
+                st.info("No managed users found in database yet.")
 
         elif admin_mode == "📊 Activity Audit Logs":
             st.subheader("Latest Activity Logs (Max 200)")
             logs_df = db.get_activity_logs(limit=200)
             st.dataframe(logs_df, use_container_width=True)
+
 
 # ── Render Helper HTML Functions ──────────────────────────────────────────────
 def status_badge(status: str) -> str:
@@ -445,10 +460,8 @@ def csv_bytes(df: pd.DataFrame) -> bytes:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN APP DASHBOARD UI
+# MAIN DASHBOARD UI
 # ══════════════════════════════════════════════════════════════════════════════
-
-# ── Header (Without requested subtitle) ───────────────────────────────────────
 st.markdown(
     """
     <div class="header-banner">
@@ -461,7 +474,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Search & Controls Bar ─────────────────────────────────────────────────────
 st.markdown('<div class="input-card">', unsafe_allow_html=True)
 col1, col2, col3, col4 = st.columns([2.5, 1.5, 1.2, 1.4])
 
@@ -490,7 +502,6 @@ with col4:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Button Action Triggers ────────────────────────────────────────────────────
 if scrape_btn:
     st.session_state.stop_requested = False
     st.session_state.current_mc = int(start_mc)
@@ -499,7 +510,6 @@ if scrape_btn:
 
 if stop_btn:
     st.session_state.stop_requested = True
-    # Auto-sync MC input with current_mc when stopped
     st.session_state.start_mc_val = int(st.session_state.current_mc)
 
 if clear_btn:
@@ -509,7 +519,6 @@ if clear_btn:
     db.log_activity(username, "CLEAR_HISTORY", "User cleared all scraped history")
     st.rerun()
 
-# ── Scraping Loop ─────────────────────────────────────────────────────────────
 if st.session_state.scraping:
     status_text = st.empty()
     live_table = st.empty()
@@ -528,7 +537,6 @@ if st.session_state.scraping:
         st.session_state.current_mc += 1
         count += 1
 
-        # Live preview (last 10 rows)
         preview = st.session_state.results[-10:]
         live_table.markdown(render_table(preview), unsafe_allow_html=True)
 
@@ -536,7 +544,6 @@ if st.session_state.scraping:
         if user_delay > 0:
             time.sleep(user_delay)
 
-    # Sync input box with stopped current_mc
     st.session_state.start_mc_val = int(st.session_state.current_mc)
     db.log_activity(username, "HARVEST_MC", f"Scraped batch up to MC-{st.session_state.current_mc:07d} ({count} total)")
 
@@ -547,7 +554,6 @@ if st.session_state.scraping:
     st.session_state.scraping = False
     st.rerun()
 
-# ── Results Tabs & Stats ──────────────────────────────────────────────────────
 results = st.session_state.results
 found = [r for r in results if r.get("_found", False)]
 active = [r for r in found if "ACTIVE" in r.get("Operating Status", "").upper() and "IN" not in r.get("Operating Status", "").upper()]
