@@ -511,7 +511,7 @@ if scrape_btn:
 
 if stop_btn:
     st.session_state.stop_requested = True
-    st.session_state["start_mc_input"] = int(st.session_state.current_mc)
+    st.session_state.start_mc_val = int(st.session_state.current_mc)
 
 if clear_btn:
     st.session_state.results = []
