@@ -1,8 +1,5 @@
 """
 scraper.py — Two-step Carrier Registration & Snapshot Scraper.
-
-Target endpoints are strictly pulled from Streamlit Secrets (st.secrets)
-to ensure 0% URL exposure in public GitHub repositories.
 """
 
 import re
@@ -12,7 +9,6 @@ import requests
 from bs4 import BeautifulSoup
 import streamlit as st
 
-# ── Fetch target endpoints strictly from Streamlit Secrets ─────────────────────
 SAFER_URL = st.secrets.get("SAFER_ENDPOINT_URL", "")
 SMS_REG_URL = st.secrets.get("SMS_ENDPOINT_URL", "")
 
@@ -28,7 +24,6 @@ HEADERS = {
 
 
 def _clean(text: str) -> str:
-    """Strip whitespace and HTML entities from a string."""
     if not text:
         return ""
     text = text.replace("\xa0", " ").replace("&nbsp;", " ")
@@ -36,7 +31,6 @@ def _clean(text: str) -> str:
 
 
 def format_mc_number(mc: int, entity_type: str) -> str:
-    """Return MC display string, prefixed with BROKER if applicable."""
     mc_str = f"MC-{mc:07d}"
     if "BROKER" in entity_type.upper():
         return f"BROKER {mc_str}"
@@ -44,10 +38,6 @@ def format_mc_number(mc: int, entity_type: str) -> str:
 
 
 def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
-    """
-    Step 1: Scrape Carrier Snapshot for a given MC number.
-    Returns a dict with carrier info, or None if not found or URL unconfigured.
-    """
     if not SAFER_URL:
         st.error("⚠️ SAFER_ENDPOINT_URL is missing from Streamlit Secrets. Please configure App Settings -> Secrets.")
         return None
@@ -119,6 +109,10 @@ def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
     if not carrier_name:
         carrier_name = get_field("Legal Name")
 
+    if "RECORD INACTIVE" in carrier_name.upper() or "INACTIVE" in carrier_name.upper():
+        if not status or status.upper() == "ACTIVE":
+            status = "INACTIVE"
+
     phone = get_field("Phone")
 
     location = ""
@@ -144,9 +138,6 @@ def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
 
 
 def fetch_carrier_email(dot_number: str) -> str:
-    """
-    Step 2: Fetch email from Registration Details page.
-    """
     if not dot_number or not SMS_REG_URL:
         return ""
 
@@ -178,10 +169,6 @@ def fetch_carrier_email(dot_number: str) -> str:
 
 
 def scrape_mc(mc_number: int) -> dict:
-    """
-    Master function to scrape full info for a single MC number.
-    Returns a unified dict formatted for the Streamlit dashboard table.
-    """
     base_info = fetch_safer_snapshot(mc_number)
 
     if not base_info:
@@ -196,6 +183,18 @@ def scrape_mc(mc_number: int) -> dict:
             "_found": False,
         }
 
+    cname = (base_info.get("carrier_name") or "").upper()
+    raw_status = (base_info.get("status") or "").upper().strip()
+
+    if "INACTIVE" in cname or "RECORD INACTIVE" in cname or "INACTIVE" in raw_status:
+        final_status = "INACTIVE"
+    elif "OUT-OF-SERVICE" in raw_status or "OOS" in raw_status:
+        final_status = "OUT-OF-SERVICE"
+    elif raw_status == "ACTIVE":
+        final_status = "ACTIVE"
+    else:
+        final_status = raw_status if raw_status else "ACTIVE"
+
     email = ""
     if base_info.get("usdot"):
         email = fetch_carrier_email(base_info["usdot"])
@@ -206,7 +205,7 @@ def scrape_mc(mc_number: int) -> dict:
         "MC Number": mc_display,
         "Carrier Name": base_info.get("carrier_name") or "—",
         "Entity Type": base_info.get("entity_type") or "CARRIER",
-        "Operating Status": base_info.get("status") or "ACTIVE",
+        "Operating Status": final_status,
         "Phone Number": base_info.get("phone") or "—",
         "Email Address": email or "—",
         "Location": base_info.get("location") or "—",
