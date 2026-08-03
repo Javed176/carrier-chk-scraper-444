@@ -1,8 +1,8 @@
 """
-scraper.py — Two-step FMCSA SAFER + SMS Carrier Registration scraper.
+scraper.py — Two-step Carrier Registration & Snapshot Scraper.
 
-Step 1: POST to SAFER with MC number → get base carrier data + USDOT number
-Step 2: GET SMS Carrier Registration page using USDOT → extract email
+Target endpoints are strictly pulled from Streamlit Secrets (st.secrets)
+to ensure 0% URL exposure in public GitHub repositories.
 """
 
 import re
@@ -12,12 +12,9 @@ import requests
 from bs4 import BeautifulSoup
 import streamlit as st
 
-# ── Fetch target URLs dynamically from st.secrets if configured ───────────────
-DEFAULT_SAFER_URL = "https://safer.fmcsa.dot.gov/query.asp"
-DEFAULT_SMS_URL = "https://ai.fmcsa.dot.gov/SMS/Carrier/{dot}/CarrierRegistration.aspx"
-
-SAFER_URL = st.secrets.get("SAFER_ENDPOINT_URL", DEFAULT_SAFER_URL)
-SMS_REG_URL = st.secrets.get("SMS_ENDPOINT_URL", DEFAULT_SMS_URL)
+# ── Fetch target endpoints strictly from Streamlit Secrets ─────────────────────
+SAFER_URL = st.secrets.get("SAFER_ENDPOINT_URL", "")
+SMS_REG_URL = st.secrets.get("SMS_ENDPOINT_URL", "")
 
 HEADERS = {
     "User-Agent": (
@@ -48,9 +45,13 @@ def format_mc_number(mc: int, entity_type: str) -> str:
 
 def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
     """
-    Step 1: Scrape SAFER Company Snapshot for a given MC number.
-    Returns a dict with carrier info, or None if not found.
+    Step 1: Scrape Carrier Snapshot for a given MC number.
+    Returns a dict with carrier info, or None if not found or URL unconfigured.
     """
+    if not SAFER_URL:
+        st.error("⚠️ SAFER_ENDPOINT_URL is missing from Streamlit Secrets. Please configure App Settings -> Secrets.")
+        return None
+
     try:
         resp = requests.post(
             SAFER_URL,
@@ -144,9 +145,9 @@ def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
 
 def fetch_carrier_email(dot_number: str) -> str:
     """
-    Step 2: Fetch email from SMS Carrier Registration Details page.
+    Step 2: Fetch email from Registration Details page.
     """
-    if not dot_number:
+    if not dot_number or not SMS_REG_URL:
         return ""
 
     url = SMS_REG_URL.format(dot=dot_number)
