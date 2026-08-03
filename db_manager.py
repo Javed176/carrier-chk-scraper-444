@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
+# Optional Supabase import
 try:
     from supabase import create_client, Client
     HAS_SUPABASE_LIB = True
@@ -19,6 +20,7 @@ except ImportError:
     HAS_SUPABASE_LIB = False
 
 
+# ── Hash Helper ───────────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
     """Hash password using SHA-256."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
@@ -44,6 +46,7 @@ if "fallback_activity_logs" not in st.session_state:
     st.session_state["fallback_activity_logs"] = []
 
 
+# ── Supabase Client Initializer ───────────────────────────────────────────────
 def _get_supabase_client() -> Optional[Client]:
     """Initialize Supabase client if secrets are properly configured."""
     if not HAS_SUPABASE_LIB:
@@ -58,6 +61,7 @@ def _get_supabase_client() -> Optional[Client]:
         return None
 
 
+# ── Database Operations Class ────────────────────────────────────────────────
 class DatabaseManager:
     """Unified Database interface with real Supabase + local fallback mode."""
 
@@ -68,7 +72,13 @@ class DatabaseManager:
     def is_using_supabase(self) -> bool:
         return self.sb is not None
 
+    # ── User Authentication & Single-Device Lockout ───────────────────────────
     def authenticate_and_login(self, username: str, password: str) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Validate username & password, generate new session_token UUID,
+        update active_session_id in DB to enforce Single-Device Lockout,
+        and log the LOGIN activity.
+        """
         username = username.strip()
         hashed = hash_password(password)
         session_token = str(uuid.uuid4())
@@ -82,6 +92,7 @@ class DatabaseManager:
                 if user_row.get("password_hash") != hashed and user_row.get("password") != password:
                     return False, "Invalid password.", None
 
+                # Update active_session_id in Supabase for single-device lockout
                 self.sb.table("users").update({"active_session_id": session_token}).eq("username", username).execute()
 
                 user_info = {
@@ -93,9 +104,11 @@ class DatabaseManager:
                 }
                 self.log_activity(username, "LOGIN", "User logged in successfully")
                 return True, "Success", user_info
-            except Exception:
+            except Exception as e:
+                # Fallback on Supabase error
                 pass
 
+        # Fallback in-memory auth
         users = st.session_state["fallback_users"]
         if username not in users:
             return False, "User not found.", None
@@ -103,6 +116,7 @@ class DatabaseManager:
         if u["password_hash"] != hashed and u.get("password") != password:
             return False, "Invalid password.", None
 
+        # Set active_session_id locally
         u["active_session_id"] = session_token
         user_info = {
             "username": u["username"],
@@ -115,6 +129,11 @@ class DatabaseManager:
         return True, "Success", user_info
 
     def verify_active_session(self, username: str, session_token: str) -> bool:
+        """
+        Single-Device Lockout Check:
+        Returns True if current local session_token matches active_session_id in DB.
+        Returns False if another browser/device has logged in using the same credentials.
+        """
         if not username or not session_token:
             return False
 
@@ -127,12 +146,15 @@ class DatabaseManager:
             except Exception:
                 pass
 
+        # Fallback mode check
         users = st.session_state.get("fallback_users", {})
         if username in users:
             return users[username].get("active_session_id") == session_token
         return True
 
+    # ── User Activity Auditing ────────────────────────────────────────────────
     def log_activity(self, user_email: str, action_type: str, details: str = ""):
+        """Record critical user action into activity_logs table."""
         now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         log_entry = {
             "timestamp": now_str,
@@ -148,11 +170,14 @@ class DatabaseManager:
             except Exception:
                 pass
 
+        # Fallback log list
         logs = st.session_state.get("fallback_activity_logs", [])
         logs.insert(0, log_entry)
+        # Cap at 500 in memory
         st.session_state["fallback_activity_logs"] = logs[:500]
 
     def get_activity_logs(self, limit: int = 200) -> pd.DataFrame:
+        """Retrieve latest N user activity logs for Super Admin review."""
         if self.is_using_supabase:
             try:
                 res = (
@@ -167,12 +192,15 @@ class DatabaseManager:
             except Exception:
                 pass
 
+        # Fallback
         logs = st.session_state.get("fallback_activity_logs", [])
         if not logs:
             return pd.DataFrame(columns=["timestamp", "user_email", "action_type", "details"])
         return pd.DataFrame(logs[:limit])
 
+    # ── Super Admin User Lifecycle Management ──────────────────────────────────
     def get_all_users(self) -> List[Dict]:
+        """Fetch list of user accounts."""
         if self.is_using_supabase:
             try:
                 res = self.sb.table("users").select("username, is_admin, delay_ms, session_duration_hours, created_at").execute()
@@ -181,6 +209,7 @@ class DatabaseManager:
             except Exception:
                 pass
 
+        # Fallback
         users = st.session_state.get("fallback_users", {})
         res = []
         for u in users.values():
@@ -202,6 +231,7 @@ class DatabaseManager:
         delay_ms: int = 500,
         session_duration_hours: float = 3.0,
     ) -> Tuple[bool, str]:
+        """Create a new user account (Super Admin feature)."""
         new_username = new_username.strip()
         if not new_username or not new_password:
             return False, "Username and password cannot be empty."
@@ -234,6 +264,7 @@ class DatabaseManager:
             except Exception as e:
                 return False, f"Database error: {str(e)}"
 
+        # Fallback
         users = st.session_state.get("fallback_users", {})
         if new_username in users:
             return False, f"Username '{new_username}' already exists."
@@ -262,6 +293,7 @@ class DatabaseManager:
         session_duration_hours: float,
         is_admin: Optional[bool] = None,
     ) -> Tuple[bool, str]:
+        """Update per-user rate limits and session durations."""
         if self.is_using_supabase:
             try:
                 update_data = {
@@ -281,6 +313,7 @@ class DatabaseManager:
             except Exception as e:
                 return False, f"Database error: {str(e)}"
 
+        # Fallback
         users = st.session_state.get("fallback_users", {})
         if target_username not in users:
             return False, f"User '{target_username}' not found."
@@ -298,4 +331,5 @@ class DatabaseManager:
         return True, f"Updated settings for '{target_username}'."
 
 
+# Singleton instance
 db = DatabaseManager()
