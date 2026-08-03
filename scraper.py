@@ -61,7 +61,7 @@ def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
     soup = BeautifulSoup(resp.text, "lxml")
     page_text = soup.get_text()
 
-    if "no records found" in page_text.lower() or "your search" in page_text.lower():
+    if "no records found" in page_text.lower() or "your search" in page_text.lower() or "record not found" in page_text.lower():
         return None
 
     def get_field(label_text: str) -> str:
@@ -108,6 +108,9 @@ def fetch_safer_snapshot(mc_number: int) -> Optional[dict]:
 
     if not carrier_name:
         carrier_name = get_field("Legal Name")
+
+    if "NOT FOUND" in carrier_name.upper() or "RECORD NOT FOUND" in carrier_name.upper():
+        return None
 
     if "RECORD INACTIVE" in carrier_name.upper() or "INACTIVE" in carrier_name.upper():
         if not status or status.upper() == "ACTIVE":
@@ -174,7 +177,7 @@ def scrape_mc(mc_number: int) -> dict:
     if not base_info:
         return {
             "MC Number": f"MC-{mc_number:07d}",
-            "Carrier Name": "Not Found",
+            "Carrier Name": "RECORD NOT FOUND",
             "Entity Type": "—",
             "Operating Status": "NOT FOUND",
             "Phone Number": "—",
@@ -186,14 +189,21 @@ def scrape_mc(mc_number: int) -> dict:
     cname = (base_info.get("carrier_name") or "").upper()
     raw_status = (base_info.get("status") or "").upper().strip()
 
-    if "INACTIVE" in cname or "RECORD INACTIVE" in cname or "INACTIVE" in raw_status:
+    if "NOT FOUND" in cname:
+        final_status = "NOT FOUND"
+        is_found = False
+    elif "INACTIVE" in cname or "RECORD INACTIVE" in cname or "INACTIVE" in raw_status:
         final_status = "INACTIVE"
+        is_found = True
     elif "OUT-OF-SERVICE" in raw_status or "OOS" in raw_status:
         final_status = "OUT-OF-SERVICE"
+        is_found = True
     elif raw_status == "ACTIVE":
         final_status = "ACTIVE"
+        is_found = True
     else:
         final_status = raw_status if raw_status else "ACTIVE"
+        is_found = True
 
     email = ""
     if base_info.get("usdot"):
@@ -209,5 +219,5 @@ def scrape_mc(mc_number: int) -> dict:
         "Phone Number": base_info.get("phone") or "—",
         "Email Address": email or "—",
         "Location": base_info.get("location") or "—",
-        "_found": True,
+        "_found": is_found,
     }
