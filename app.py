@@ -129,7 +129,7 @@ def _render_login_screen() -> bool:
             '<div class="login-card">'
             '<div class="login-icon">🔒</div>'
             '<div class="login-title">FMCSA Scraper Access</div>'
-            '<div class="login-sub">Enter your admin-provided credentials to sign in</div>'
+            '<div class="login-sub">Enter your admin-provided credentials to sign in.Contact my176business@gmail.com or +923097503520</div>'
             '</div>',
             unsafe_allow_html=True,
         )
